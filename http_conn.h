@@ -21,6 +21,7 @@
 #include<sys/uio.h>
 
 #include "locker.h"
+#include "sql_conn_pool.h"
 
 
 /* 线程池模板参数类，用以封装对逻辑任务的处理 */
@@ -60,17 +61,24 @@ class http_conn
 		/* 初始化新接受的连接 */
 		void init( int sockfd, const sockaddr_in &addr );
 
-		/* 关闭连接 */
+		/* 关闭http连接 */
 		void close_conn( bool real_close = true );
 
 		/* 处理客户端请求 */
 		void process();
 
-		/* 非阻塞读操作 */
+		/* 读取浏览器发来的数据 */
 		bool read();
 
-		/* 非阻塞写操作 */
+		/* 响应报文以此写入 */
 		bool write();
+
+		sockaddr_in *get_address(){
+			return &m_address;
+		};
+
+		// 同步线程初始化数据库读取表
+		void initmysql_result(conn_pool *connPool);
 
 
 	private:
@@ -105,6 +113,7 @@ class http_conn
 		static int m_epollfd;	/* 所有socket上的事件都被注册到同一个epoll内核事件表，所以将epoll文件描述符设置为静态的 */
 
 		static int m_user_count;	/* 统计用户数量 */
+		MYSQL *mysql;
 
 	private:
 		/* 该HTTP连接的socket和对方的socket地址 */
@@ -147,6 +156,9 @@ class http_conn
 		/*采用writev执行写操作，m_iv_count表示被写内存块的数量*/
 		struct iovec m_iv[2];
 		int m_iv_count;
+
+		int cgi;				// 是否启动CGI
+		char *m_string;			// 请求头数据
 };
 
 

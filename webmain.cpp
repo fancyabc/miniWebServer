@@ -16,6 +16,7 @@
 #include "locker.h"
 #include "threadpool.h"
 #include "http_conn.h"
+#include "sql_conn_pool.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
@@ -60,6 +61,10 @@ int main( int argc, char *argv[] )
 	/* 忽略SIGPIPE信号 */
 	addsig( SIGPIPE, SIG_IGN );
 
+	// 创建数据库连接池
+	conn_pool *connPool = conn_pool::GetInstance();
+	connPool->init("localhost", "fancy", "mypass", "test", 3306, 8 );
+
 	/* 创建线程池 */
 	threadpool<http_conn> * pool = NULL;
 	try
@@ -74,6 +79,10 @@ int main( int argc, char *argv[] )
 	/* 预先为每个可能的客户连接分配一个http_conn 对象 */
 	http_conn *users = new http_conn[MAX_FD];
 	assert( users );
+
+	/* 初始化数据库读取表 */
+	users->initmysql_result(connPool);
+
 	int user_count = 0;		// 客户端连接计数
 
 	int listenfd = socket( PF_INET, SOCK_STREAM, 0 );

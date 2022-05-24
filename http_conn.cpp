@@ -2,6 +2,8 @@
 
 #include "http_conn.h"
 
+#include <map>
+
 
 /* 定义HTTP响应的一些状态信息 */
 const char * ok_200_title = "OK";
@@ -15,7 +17,43 @@ const char * error_500_title = "Internal Error";
 const char * error_500_form = "There was an unusual problem serving the requested file.\n";
 
 /* 网站的根目录 */
-const char * doc_root = "/var/www/html";
+const char * doc_root = "/home/fancy/Desktop/MyProjects/miniWebServer/root";
+
+
+map<string,string> users;	// 用户名 密码
+locker m_lock;
+
+
+/* 将数据库的用户和密码载入到服务器的map中来 */
+void http_conn::initmysql_result(conn_pool *connPool)
+{
+	// 从连接池取一个连接
+	MYSQL *mysql = NULL;
+	connctionRAII mysqlcon(&mysql, connPool);
+
+	// user 表中检索 username,passwd 数据
+	if(mysql_query(mysql, "SELECT username,passwd FROM user") != 0)
+	{
+		printf("SELECT error:%s\n", mysql_error(mysql));
+	}
+
+	// 从表中检索完整的结果集
+	MYSQL_RES *res = mysql_store_result(mysql);
+
+	int num_fields = mysql_num_fields(res);	// 结果集的列数
+
+	// 所有字段结构的数组
+	MYSQL_FIELD *fields = mysql_fetch_fields(res);
+
+	// 从结果集中获取下一行，将对应的用户名和密码存入map
+	while( MYSQL_ROW row = mysql_fetch_row(res) )
+	{
+		string temp1(row[0]);
+		string temp2(row[1]);
+
+		users[temp1] = temp2;
+	}
+}
 
 int setnonblocking( int fd )
 {
@@ -161,6 +199,7 @@ bool http_conn::read()
 
 		if( bytes_read == -1 )
 		{
+			// 非阻塞ET模式下，需要一次性将数据读完
 			if( errno == EAGAIN || errno == EWOULDBLOCK )
 			{
 				break;
@@ -197,7 +236,12 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 	{
 		m_method = GET;
 	}
-	else	
+	else if( strcasecmp( method, "POST" ) == 0 )
+	{
+		m_method = POST;
+		cgi = 1;
+	}
+	else
 	{
 		return BAD_REQUEST;
 	}
@@ -226,6 +270,12 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 		m_url = strchr( m_url, '/' );		// 在m_url中查找'/'的第一个匹配之处
 	}
 
+	if( strncasecmp( m_url,"https://", 8 ) == 0 )
+	{
+		m_url += 8;		// 
+		m_url = strchr( m_url, '/' );		// 在m_url中查找'/'的第一个匹配之处
+	}
+
 	/* 如果m_url是空字符串 或者 它的第一个字符不是'/',则说明这个请求是不合法的 */
 	if( !m_url || m_url[0] != '/' )
 	{
@@ -233,6 +283,10 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 	}
 
 	printf("url is %s\n", m_url);
+
+	/* 默认页面 */
+	if(strlen(m_url) == 1 )
+		strcat(m_url, "judge.html");
 
 	m_check_state = CHECK_STATE_HEADER;	// 修改状态 为 CHECK_STATE_HEADER
 	return NO_REQUEST;
@@ -294,6 +348,9 @@ http_conn::HTTP_CODE http_conn::parse_content( char *text )
 	if( m_read_idx >= ( m_content_length + m_checked_idx ) )
 	{
 		text[m_content_length] = '\0';
+
+		// POST请求中最后为输入的用户名和密码
+		m_string = text;	// 这里的 消息体我们传输的是 用户名和密码
 		return GET_REQUEST;
 	}
 	return NO_REQUEST;
@@ -312,7 +369,7 @@ http_conn::HTTP_CODE http_conn::process_read()
 	{
 		text = get_line();		// 获取正在解析的行起始在 读缓冲区的位置
 		m_start_line = m_checked_idx;	// m_start_line：当前正在解析的行的起始位置； m_checked_idx： 当前正在分析的字符在读缓冲区中的位置。 
-		printf( "got 1 http line: %s\n", text );
+//		printf( "got 1 http line: %s\n", text );
 
 		/* 根据状态进行对应的处理 */
 		switch( m_check_state )
@@ -360,14 +417,126 @@ http_conn::HTTP_CODE http_conn::process_read()
 }
 
 
-/* 当得到一个完整、正确地HTTP请求时，我们就分析目标文件的属性。如果目标文件存在、对所有用户可读，且不是目录，则使用mmap将其映射到内存地址m_file_address处，并告诉调用者获取文件成功 */
+
 http_conn::HTTP_CODE http_conn::do_request()
 {
 	strcpy( m_real_file, doc_root );		// 将网站根目录复制到缓冲区 m_real_file
 	int len = strlen( doc_root );
 
-	// 注意 strncpy 函数： 1、不能保证目标字符串以'\0'结束（源字符串大于目标字符串时）；2、源字符串较小，目标字符串较大时，将会用大量'\0'填充
-	strncpy( m_real_file + len, m_url, FILENAME_LEN - len -1 );		// 客户请求的目标文件的完整路径，其内容等于（根目录+目标文件名） doc_root + m_url
+	const char *p = strchr(m_url, '/');
+
+	if( cgi == 1 && ( *(p+1) == '2' || *(p+1) == '3' ) )
+	{
+		char flag = m_url[1];	// 根据标志判断是否已经登陆
+
+		char *m_url_real = (char *)malloc(sizeof(char)*200);
+		strcpy(m_url_real, "/");
+		strcat(m_url_real, m_url+2);
+		strncpy(m_real_file+len, m_url_real, FILENAME_LEN - len -1);
+		free(m_url_real);
+
+		/* 提取用户名和密码 */
+		char name[100],password[100];
+		int i;
+
+		for(i = 5; m_string[i] != '&'; ++i)
+		{
+			name[i-5] = m_string[i]; 
+		}
+		name[i-5] = '\0';
+
+		int j = 0;
+		for(i = i+10; m_string[i] != '\0'; i++,j++ )
+		{
+			password[j] = m_string[i];
+		}
+		password[j] = '\0';
+
+
+		/* 同步线程登录校验 */
+		if( *(p+1) == '3' )	//注册
+		{
+			char *sql_insert = (char *)malloc(sizeof(char) * 200);
+			strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
+			strcat(sql_insert,"'");
+			strcat(sql_insert,name);
+			strcat(sql_insert,", '");
+			strcat(sql_insert,password);
+			strcat(sql_insert,"')");
+
+			/* 查找是否有重复用户名 */
+			if( users.find(name) == users.end() )	//无重复用户名
+			{
+				m_lock.lock();
+
+				int res = mysql_query(mysql, sql_insert);
+				users.insert(pair<string,string>(name, password));
+				m_lock.unlock();
+
+				if( !res )
+				{
+					strcpy(m_url,"/login.html");
+				}
+				else
+				{
+					strcpy(m_url,"/registerError.html");
+				}
+			}
+			else
+				strcpy(m_url,"/registerError.html");
+
+		}
+		else if( *(p+1) == '2' )	// 登录
+		{
+			if(users.find(name) != users.end() && users[name] == password )
+			{
+				strcpy(m_url, "/welcome.html");
+			}
+			else
+			{
+				strcpy(m_url, "/logError.html");
+			}
+		}
+	}
+
+	if( *(p+1) == '0')
+	{
+		char *m_url_real = (char *)malloc(sizeof(char)*200);
+		strcpy(m_url_real, "/register.html");
+		strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+		free(m_url_real);
+	}
+	else if( *(p+1) == '1')
+	{
+		char *m_url_real = (char *)malloc(sizeof(char)*200);
+		strcpy(m_url_real, "/login.html");
+		strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+		free(m_url_real);
+	}
+	else if( *(p+1) == '5')
+	{
+		char *m_url_real = (char *)malloc(sizeof(char)*200);
+		strcpy(m_url_real, "/picture.html");
+		strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+		free(m_url_real);
+	}
+	else if( *(p+1) == '6')
+	{
+		char *m_url_real = (char *)malloc(sizeof(char)*200);
+		strcpy(m_url_real, "/video.html");
+		strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+		free(m_url_real);
+	}
+	else
+	{
+		// 注意 strncpy 函数： 1、不能保证目标字符串以'\0'结束（源字符串大于目标字符串时）；2、源字符串较小，目标字符串较大时，将会用大量'\0'填充
+		strncpy( m_real_file + len, m_url, FILENAME_LEN - len -1 );		// 客户请求的目标文件的完整路径，其内容等于（根目录+目标文件名） doc_root + m_url
+	}
+
 
 	/* 获取文件信息 */
 	if( stat( m_real_file, &m_file_stat ) < 0 )	// stat 返回文件相关信息（缓冲区m_file_stat指向的stat结构），返回值0表示调用成功；-1表示调用失败

@@ -9,7 +9,7 @@
 #include <exception>
 #include <pthread.h>
 
-#include "locker.h"
+#include "locker.h" 
 
 /* 线程池类，将它定义为模板类是为了代码复用，模板T是任务类 */
 template< typename T >
@@ -58,7 +58,7 @@ threadpool< T >::threadpool( int thread_number, int max_requests ):
 	/* 创建thread_number个线程，并把他们都设置为脱离线程 */
 	for( int i = 0; i < thread_number; i++ )
 	{
-		printf( "create the %dth thread\n", i );
+		// printf( "create the %dth thread\n", i );
 		if( pthread_create( m_threads + i, NULL, worker, this ) !=0 )	// 此处将线程参数设置为this指针，然后在worker函数中获取该指针并调用其动态方法run
 		{
 			delete [] m_threads;
