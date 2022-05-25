@@ -10,13 +10,14 @@
 #include <pthread.h>
 
 #include "locker.h" 
+#include "sql_conn_pool.h"
 
 /* 线程池类，将它定义为模板类是为了代码复用，模板T是任务类 */
 template< typename T >
 class threadpool
 {
 public:
-	threadpool( int thread_number = 8, int max_requests = 10000 );
+	threadpool( conn_pool *connPool, int thread_number = 8, int max_requests = 10000 );
 	~threadpool();
 
 	/* 往队列中添加任务 */
@@ -29,19 +30,21 @@ private:
 
 private:
 	int m_thread_number;			/* 线程池中的线程数 */
-	int m_max_requests;			/* 请求队列中允许的最大请求数 */
-	pthread_t * m_threads;		/* 描述线程池的数组，大小为 m_thread_number */
+	int m_max_requests;				/* 请求队列中允许的最大请求数 */
+	pthread_t * m_threads;			/* 描述线程池的数组，大小为 m_thread_number */
 	std::list< T* > m_workqueue;	/* 请求队列 */
-	locker m_queuelocker;	/* 保护请求队列的互斥锁 */
-	sem m_queuestat;	/* 是否有任务需要处理 */
-	bool m_stop;	/* 是否结束线程 */
+	locker m_queuelocker;			/* 保护请求队列的互斥锁 */
+	sem m_queuestat;				/* 是否有任务需要处理 */
+	bool m_stop;					/* 是否结束线程 */
+
+	conn_pool *m_connPool;			/* 数据库连接池 */
 };
 
 
 template< typename T >
-threadpool< T >::threadpool( int thread_number, int max_requests ):
+threadpool< T >::threadpool( conn_pool *connPool, int thread_number, int max_requests ):
 	m_thread_number( thread_number ), m_max_requests( max_requests ),
-	m_stop( false ), m_threads( NULL )
+	m_stop( false ), m_threads( NULL ), m_connPool(connPool)
 {
 	if( (thread_number <= 0) || (max_requests <= 0) )
 	{
@@ -127,6 +130,10 @@ void threadpool<T>::run()
 		{
 			continue;
 		}
+
+		/* 通过RAII方式从数据库连接池中取一个连接 */
+		connctionRAII mysqlcon(&request->mysql, m_connPool);
+
 		request->process();
 	}
 }

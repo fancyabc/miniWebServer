@@ -113,7 +113,7 @@ class http_conn
 		static int m_epollfd;	/* 所有socket上的事件都被注册到同一个epoll内核事件表，所以将epoll文件描述符设置为静态的 */
 
 		static int m_user_count;	/* 统计用户数量 */
-		MYSQL *mysql;
+		MYSQL *mysql;				/* 数据库连接 */
 
 	private:
 		/* 该HTTP连接的socket和对方的socket地址 */
