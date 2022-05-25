@@ -159,6 +159,8 @@ int main( int argc, char *argv[] )
 
 	/* 每个user http请求 对应的定时器 */
 	client_data *user_timer = new client_data[MAX_FD];
+	assert(user_timer);
+
 	alarm(TIME_SLOT);
 	bool timeout = false;
 
@@ -198,8 +200,9 @@ int main( int argc, char *argv[] )
 
 				/* 初始化client_data数据 */
 				user_timer[connfd].address = client_addr;
-				user_timer[connfd].sockfd = sockfd;
+				user_timer[connfd].sockfd = connfd;
 				util_timer *timer = new util_timer;
+				assert(timer);
 				timer->user_data = &user_timer[connfd];
 				timer->cb_func = cb_func;
 				time_t c_time = time(NULL);
@@ -212,7 +215,7 @@ int main( int argc, char *argv[] )
 			{
 				/* 如果有异常，直接关闭客户端连接，并移除对应定时器 */
 				//users[sockfd].close_conn();
-				util_timer *timer = user_timer->timer;
+				util_timer *timer = user_timer[sockfd].timer;
 				timer->cb_func(&user_timer[sockfd]);
 
 				if(timer)

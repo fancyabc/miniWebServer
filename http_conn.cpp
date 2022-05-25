@@ -460,7 +460,7 @@ http_conn::HTTP_CODE http_conn::do_request()
 			strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
 			strcat(sql_insert,"'");
 			strcat(sql_insert,name);
-			strcat(sql_insert,", '");
+			strcat(sql_insert,"', '");
 			strcat(sql_insert,password);
 			strcat(sql_insert,"')");
 
