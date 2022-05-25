@@ -17,12 +17,33 @@
 #include "threadpool.h"
 #include "http_conn.h"
 #include "sql_conn_pool.h"
+#include "lst_timer.h"
 
 #define MAX_FD 65536
 #define MAX_EVENT_NUMBER 10000
+#define TIME_SLOT 5			// 最小超时时间
 
 extern int addfd( int epollfd, int fd, bool one_shot );
 extern int removefd( int epollfd, int fd );
+extern int setnonblocking(int fd);
+
+
+/* 定时器相关参数 */
+static int pipefd[2];
+static sort_timer_lst timer_lst;
+static int epollfd;
+
+
+/* 信号处理函数 */
+void sig_handler(int sig)
+{
+	int save_errno = errno;
+	int msg = sig;
+
+	send(pipefd[1],(char *)&msg, 1, 0);	// pipefd[1] 非阻塞的，因为缓冲区满会阻塞，进一步增加信号处理函数执行时间
+	errno = save_errno;
+}
+
 
 void addsig( int sig, void (handler)(int), bool restart = true )
 {
@@ -43,6 +64,24 @@ void show_error( int connfd, const char *info )
 	printf( "%s", info );
 	send( connfd, info, strlen( info ), 0 );
 	close(connfd);
+}
+
+
+void timer_handler()
+{
+	timer_lst.tick();
+
+	alarm(TIME_SLOT);
+}
+
+
+void cb_func(client_data *userdata)
+{
+	epoll_ctl(epollfd, EPOLL_CTL_DEL, userdata->sockfd, 0);
+	assert(userdata);
+	close(userdata->sockfd);
+	http_conn::m_user_count--;
+	printf("close fd %d", userdata->sockfd);
 }
 
 
@@ -104,12 +143,28 @@ int main( int argc, char *argv[] )
 	assert( ret >= 0 );
 
 	epoll_event events[MAX_EVENT_NUMBER];
-	int epollfd = epoll_create( 5 );
+	epollfd = epoll_create( 5 );
 	assert( epollfd != -1 );
 	addfd( epollfd, listenfd, false );
 	http_conn::m_epollfd = epollfd;
 
-	while( true )
+
+	ret = socketpair(AF_UNIX, SOCK_STREAM, 0, pipefd);
+	assert(ret != -1);
+	setnonblocking(pipefd[1]);
+	addfd(epollfd, pipefd[0], false);
+
+	addsig(SIGALRM, sig_handler, false);
+	addsig(SIGTERM, sig_handler, false);
+
+	/* 每个user http请求 对应的定时器 */
+	client_data *user_timer = new client_data[MAX_FD];
+	alarm(TIME_SLOT);
+	bool timeout = false;
+
+	bool stop_server = false;
+
+	while( !stop_server )
 	{
 		int number = epoll_wait( epollfd, events, MAX_EVENT_NUMBER, -1 );
 		if( (number < 0) && (errno != EINTR) )
@@ -140,42 +195,146 @@ int main( int argc, char *argv[] )
 				}
 				/* 初始化客户连接 */
 				users[connfd].init( connfd, client_addr );
+
+				/* 初始化client_data数据 */
+				user_timer[connfd].address = client_addr;
+				user_timer[connfd].sockfd = sockfd;
+				util_timer *timer = new util_timer;
+				timer->user_data = &user_timer[connfd];
+				timer->cb_func = cb_func;
+				time_t c_time = time(NULL);
+				timer->expire = c_time + 3*TIME_SLOT;
+				user_timer[connfd].timer = timer;
+				timer_lst.add_timer(timer);
+
 			}
 			else if( events[i].events & ( EPOLLRDHUP | EPOLLHUP | EPOLLERR ) )
 			{
-				/* 如果有异常，直接关闭客户端连接 */
-				users[sockfd].close_conn();
-			}
-			else if( events[i].events & EPOLLIN )
-			{
-				/* 根据读的结果，决定是将任务添加到线程池还是关闭连接 */
-				if( users[sockfd].read() )
+				/* 如果有异常，直接关闭客户端连接，并移除对应定时器 */
+				//users[sockfd].close_conn();
+				util_timer *timer = user_timer->timer;
+				timer->cb_func(&user_timer[sockfd]);
+
+				if(timer)
 				{
-					pool->append( users + sockfd );
+					timer_lst.del_timer(timer);
+				}
+			}
+			else if(sockfd == pipefd[0] && ( events[i].events & EPOLLIN ))
+			{
+				//int sig;
+				char signals[1024];
+
+				// 从管道读端读出信号值，成功返回字节数，失败返回-1, 正常情况下ret总返回1，只有14和15两个ASCII码对应的字符
+				int ret = recv(pipefd[0], signals, sizeof(signals), 0);
+				
+				if(ret == -1)
+				{
+					continue;	// 出错
+				}
+				else if( ret == 0 )
+				{
+					continue;
 				}
 				else
 				{
-					users[sockfd].close_conn();
+					for(int i = 0; i < ret; ++i)
+					{
+						switch (signals[i])
+						{
+						case SIGALRM:
+						{
+							timeout = true;
+							break;
+						}
+						case SIGTERM:
+						{
+							stop_server = true;
+							break;
+						}
+						default:
+							break;
+						}
+					}
+				}
+			}
+			else if( events[i].events & EPOLLIN )
+			{	/* 处理客户连接上收到的数据 */
+				util_timer *timer = user_timer[sockfd].timer;
+				if( users[sockfd].read() )
+				{
+					/* log */
+
+
+					pool->append( users + sockfd );
+
+					/* 若有数据传输，则重置定时器超时时间 */
+					if(timer)
+					{
+						time_t cur = time(NULL);
+						timer->expire = cur + 3 * TIME_SLOT;
+						/* Log */
+						timer_lst.adjust_timer(timer);
+					}
+				}
+				else
+				{
+					// 关闭连接并删除对应定时器
+					//users[sockfd].close_conn();
+					timer->cb_func(&user_timer[sockfd]);
+					if(timer)
+					{
+						timer_lst.del_timer(timer);
+					}
 				}
 			}
 			else if( events[i].events & EPOLLOUT )
 			{
+				util_timer *timer = user_timer[sockfd].timer;
 				/* 根据写的结果，决定是否关闭连接 */
-				if( !users[sockfd].write() )
+				if( users[sockfd].write() )
 				{
-					users[sockfd].close_conn();
+					/* log */
+
+					/* 若有数据传输，则重置定时器超时时间 */
+					if(timer)
+					{
+						time_t cur = time(NULL);
+						timer->expire = cur + 3 * TIME_SLOT;
+						/* Log */
+						timer_lst.adjust_timer(timer);
+					}
+				}
+				else
+				{
+					// 关闭连接并删除对应定时器
+					//users[sockfd].close_conn();
+					timer->cb_func(&user_timer[sockfd]);
+					if(timer)
+					{
+						timer_lst.del_timer(timer);
+					}
 				}
 
 			}
 			else
 			{
+					// other
 			}
+		}
+		if(timeout)
+		{
+			timer_handler();
+			timeout = false;
 		}
 	}
 
 	close( epollfd );
 	close( listenfd );
+	close(pipefd[0]);
+	close(pipefd[1]);
 	delete [] users;
+	delete [] user_timer;
 	delete pool;
 	return 0;
 }
