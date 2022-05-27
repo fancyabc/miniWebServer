@@ -1,8 +1,10 @@
 /* 用线程池实现一个并发的web服务器 */
 
-#include "http_conn.h"
-
 #include <map>
+
+#include "http_conn.h"
+#include "./log/log.h"
+
 
 
 /* 定义HTTP响应的一些状态信息 */
@@ -34,7 +36,8 @@ void http_conn::initmysql_result(conn_pool *connPool)
 	// user 表中检索 username,passwd 数据
 	if(mysql_query(mysql, "SELECT username,passwd FROM user") != 0)
 	{
-		printf("SELECT error:%s\n", mysql_error(mysql));
+		//printf("SELECT error:%s\n", mysql_error(mysql));
+		LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
 	}
 
 	// 从表中检索完整的结果集
@@ -282,7 +285,10 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 		return BAD_REQUEST;
 	}
 
+	/* 在此显示请求的url */
 	printf("url is %s\n", m_url);
+	LOG_INFO("url is %s\n", m_url);
+	Log::get_instance()->flush();
 
 	/* 默认页面 */
 	if(strlen(m_url) == 1 )
@@ -335,7 +341,9 @@ http_conn::HTTP_CODE http_conn::parse_headers( char * text )
 	}
 	else
 	{
-		printf("oop! unknow header %s\n",text);
+		//printf("oop! unknow header %s\n",text);
+		LOG_INFO("oop! unknow header %s\n",text);
+		Log::get_instance()->flush();
 	}
 
 	return NO_REQUEST;
@@ -370,6 +378,8 @@ http_conn::HTTP_CODE http_conn::process_read()
 		text = get_line();		// 获取正在解析的行起始在 读缓冲区的位置
 		m_start_line = m_checked_idx;	// m_start_line：当前正在解析的行的起始位置； m_checked_idx： 当前正在分析的字符在读缓冲区中的位置。 
 //		printf( "got 1 http line: %s\n", text );
+		LOG_INFO( "got 1 http line: %s\n", text );
+		Log::get_instance()->flush();
 
 		/* 根据状态进行对应的处理 */
 		switch( m_check_state )
@@ -553,7 +563,7 @@ http_conn::HTTP_CODE http_conn::do_request()
 	/* 文件类型不能是目录 */
 	if( S_ISDIR( m_file_stat.st_mode ) )		// 测试宏S_ISDIR() 判断文件类型
 	{
-		printf("文件类型不能是目录\n");
+		// printf("文件类型不能是目录\n");
 		return BAD_REQUEST;
 	}
 	int fd = open( m_real_file, O_RDONLY );		// 以只读方式打开 文件 m_real_file
@@ -655,6 +665,9 @@ bool http_conn::add_response( const char * format, ... )
 
 	m_write_idx += len;		// 在缓冲区写入了len个字符，需要将当前游标后移len
 	va_end( arg_list );
+
+	LOG_INFO("request:%s", m_write_buf);
+    Log::get_instance()->flush();
 	return true;
 }
 
