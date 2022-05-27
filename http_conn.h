@@ -133,7 +133,10 @@ class http_conn
 		int m_start_line;
 
 		char  m_write_buf[ WRITE_BUFFER_SIZE ];
-		int m_write_idx;
+		int m_write_idx;	// 写游标位置
+
+		int bytes_have_send;	// 已发送字节数
+		int bytes_to_send;		// 待发送字节数
 
 		/* 主状态机当前所处的状态 */
 		CHECK_STATE m_check_state;

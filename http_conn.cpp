@@ -139,8 +139,11 @@ void http_conn::init()
 	m_start_line = 0;
 	m_checked_idx = 0;
 	m_read_idx = 0;
-
 	m_write_idx = 0;
+	bytes_have_send = 0;
+	bytes_to_send = 0;
+	cgi = 0;
+
 	memset( m_read_buf, '\0', READ_BUFFER_SIZE );
 	memset( m_write_buf, '\0', WRITE_BUFFER_SIZE );
 	memset( m_real_file, '\0', FILENAME_LEN );
@@ -592,9 +595,8 @@ void http_conn::unmap()
 bool http_conn::write()
 {
 	int temp = 0;
-	int bytes_have_send = 0;
-	int bytes_to_send = m_write_idx;	// 要发送的字节数是 写缓冲区开始 到 当前写位置的偏移量
-	if( bytes_to_send == 0 )	// 要发送的字节数为0 ？
+
+	if( bytes_to_send == 0 )
 	{
 		modfd( m_epollfd, m_sockfd, EPOLLIN );	// 绑定m_sockfd到m_epollfd，关注其读事件
 		init();		// 初始化连接
@@ -604,13 +606,13 @@ bool http_conn::write()
 	while( 1 )
 	{
 		temp = writev( m_sockfd, m_iv, m_iv_count );
-		if( temp <= -1 )
+
+		/* 出错 */
+		if( temp < 0 ) 
 		{
-			
-			//如果TCP写缓冲没有空间，则等待下一轮EPOLLOUT事件（虽然在此期间，服务器无法连接到同一客户的下一个请求，但是可以保证连接的完整性）
 			if( errno == EAGAIN )	// TCP窗口太小，暂时发不出去
 			{
-				modfd( m_epollfd, m_sockfd, EPOLLOUT );	// 绑定m_sockfd到m_epollfd， 关注其写事件
+				modfd( m_epollfd, m_sockfd, EPOLLOUT );	// 绑定m_sockfd到m_epollfd， 关注其写事件			
 				return true;
 			}
 
@@ -619,23 +621,36 @@ bool http_conn::write()
 			return false;
 		}
 
-		bytes_to_send -= temp;		// 更新需要发送的字节数： 还要发送的字节数 = 要发送的字节数 - 已经写进去的字节数temp
-		bytes_have_send += temp;	// 更新已经发送的字节数： 已经发送的字节数 = 已发送的字节数 + 已经写进去的字节数temp
-		
-		if( bytes_to_send <= bytes_have_send )	/* 已经发送完 */
+		/* 正常传输 */
+		bytes_have_send += temp;
+		bytes_to_send -= temp;
+
+		if( bytes_have_send >= m_iv[0].iov_len )	// 块0已经 发送完毕
+		{
+			m_iv[0].iov_len = 0;
+			m_iv[1].iov_base = m_file_address + (bytes_have_send - m_write_idx);
+			m_iv[1].iov_len = bytes_to_send;
+		}
+		else
+		{
+			m_iv[0].iov_base = m_write_buf + bytes_have_send;
+			m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;
+		}
+
+
+		if( bytes_to_send <= 0 )	/* 已经发送完 */
 		{
 			/* 发送HTTP响应成功，根据HTTP请求中的Connection字段决定是否立即关闭连接 */
 			unmap();	// 解除映射
+			modfd( m_epollfd, m_sockfd, EPOLLIN );
 
 			if( m_linger )
 			{
 				init();
-				modfd( m_epollfd, m_sockfd, EPOLLIN );
 				return true;
 			}
 			else
-			{
-				modfd( m_epollfd, m_sockfd, EPOLLIN );
+			{		
 				return false;
 			}
 		}
@@ -771,6 +786,7 @@ bool http_conn::process_write( HTTP_CODE ret )
 				m_iv[0].iov_len = m_write_idx;
 				m_iv[1].iov_base = m_file_address;
 				m_iv[1].iov_len = m_file_stat.st_size;
+				bytes_to_send = m_write_idx + m_file_stat.st_size;
 				m_iv_count = 2;
 				return true;
 			}
@@ -792,6 +808,7 @@ bool http_conn::process_write( HTTP_CODE ret )
 	m_iv[0].iov_base = m_write_buf;
 	m_iv[0].iov_len = m_write_idx;
 	m_iv_count = 1;
+	bytes_to_send = m_write_idx;
 	return true;
 }
 
