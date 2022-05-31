@@ -66,11 +66,17 @@ int setnonblocking( int fd )
 	return old_option;
 }
 
-void addfd( int epollfd, int fd, bool one_shot )
+void addfd( int epollfd, int fd, bool one_shot, int trig_mode )
 {
 	epoll_event event;
 	event.data.fd = fd;
-	event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+
+	// 边沿触发模式
+	if(1 == trig_mode)
+		event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+	else	// 水平触发模式
+		event.events = EPOLLIN | EPOLLRDHUP;
+
 	if( one_shot )
 	{
 		event.events |= EPOLLONESHOT;
@@ -87,11 +93,17 @@ void removefd( int epollfd, int fd )
 }
 
 
-void modfd( int epollfd, int fd, int ev )
+void modfd( int epollfd, int fd, int ev, int trig_mode )
 {
 	epoll_event event;
 	event.data.fd = fd;
-	event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+
+	// 边沿触发模式
+	if(1 == trig_mode)
+		event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+	else	// 水平触发模式
+		event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+	
 	epoll_ctl( epollfd, EPOLL_CTL_MOD, fd, &event );
 }
 
@@ -110,7 +122,7 @@ void http_conn::close_conn( bool real_close )
 }
 
 
-void http_conn::init( int sockfd, const sockaddr_in &addr )
+void http_conn::init( int sockfd, const sockaddr_in &addr, int trig_mode )
 {
 	m_sockfd = sockfd;
 	m_address = addr;
@@ -119,7 +131,9 @@ void http_conn::init( int sockfd, const sockaddr_in &addr )
 	int reuse = 1;
 	setsockopt( m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof( reuse ) );
 
-	addfd( m_epollfd, sockfd, true );
+	m_trig_mode = trig_mode;	// 初始化触发模式
+
+	addfd( m_epollfd, sockfd, true, m_trig_mode );
 	m_user_count++;
 
 	init();
@@ -199,27 +213,41 @@ bool http_conn::read()
 	}
 
 	int bytes_read = 0;
-	while( true )
-	{ 
+
+	if( 0 == m_trig_mode )	// LT模式下读取
+	{
 		bytes_read = recv( m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0 );
+		m_read_idx += bytes_read;
 
-		if( bytes_read == -1 )
-		{
-			// 非阻塞ET模式下，需要一次性将数据读完
-			if( errno == EAGAIN || errno == EWOULDBLOCK )
-			{
-				break;
-			}
-			return false;
-		}
-		else if( bytes_read == 0 )	// 对端关闭连接
+		if( bytes_read <= 0 )
 		{
 			return false;
 		}
-
-		m_read_idx += bytes_read;	// 更新当前游标位置
+		return true;
 	}
-	return true;
+	else{				// ET mode
+		while( true )
+		{ 
+			bytes_read = recv( m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0 );
+
+			if( bytes_read == -1 )
+			{
+				// 非阻塞ET模式下，需要一次性将数据读完
+				if( errno == EAGAIN || errno == EWOULDBLOCK )
+				{
+					break;
+				}
+				return false;
+			}
+			else if( bytes_read == 0 )	// 对端关闭连接
+			{
+				return false;
+			}
+
+			m_read_idx += bytes_read;	// 更新当前游标位置
+		}
+		return true;
+	}
 }
 
 
@@ -598,7 +626,7 @@ bool http_conn::write()
 
 	if( bytes_to_send == 0 )
 	{
-		modfd( m_epollfd, m_sockfd, EPOLLIN );	// 绑定m_sockfd到m_epollfd，关注其读事件
+		modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );	// 绑定m_sockfd到m_epollfd，关注其读事件
 		init();		// 初始化连接
 		return true;	// 返回调用成功 true
 	}
@@ -612,7 +640,7 @@ bool http_conn::write()
 		{
 			if( errno == EAGAIN )	// TCP窗口太小，暂时发不出去
 			{
-				modfd( m_epollfd, m_sockfd, EPOLLOUT );	// 绑定m_sockfd到m_epollfd， 关注其写事件			
+				modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );	// 绑定m_sockfd到m_epollfd， 关注其写事件			
 				return true;
 			}
 
@@ -642,7 +670,7 @@ bool http_conn::write()
 		{
 			/* 发送HTTP响应成功，根据HTTP请求中的Connection字段决定是否立即关闭连接 */
 			unmap();	// 解除映射
-			modfd( m_epollfd, m_sockfd, EPOLLIN );
+			modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
 
 			if( m_linger )
 			{
@@ -821,7 +849,7 @@ void http_conn::process()
 	/* 状态是NO_REQUEST 请求不完整，需要继续读取客户数据时，重新绑定m_sockfd到m_epollfd并关注其读；然后返回 */
 	if( read_ret == NO_REQUEST )
 	{
-		modfd( m_epollfd, m_sockfd, EPOLLIN );
+		modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
 		return;
 	}
 
@@ -832,5 +860,5 @@ void http_conn::process()
 		close_conn( );
 	}
 
-	modfd( m_epollfd, m_sockfd, EPOLLOUT );
+	modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );
 }

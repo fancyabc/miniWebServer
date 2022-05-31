@@ -24,7 +24,7 @@
 #define MAX_EVENT_NUMBER 10000
 #define TIME_SLOT 5			// 最小超时时间
 
-extern int addfd( int epollfd, int fd, bool one_shot );
+extern int addfd( int epollfd, int fd, bool one_shot, int trig_mode );
 extern int removefd( int epollfd, int fd );
 extern int setnonblocking(int fd);
 
@@ -147,17 +147,23 @@ int main( int argc, char *argv[] )
 	ret = listen( listenfd, 5 );
 	assert( ret >= 0 );
 
+	/* 触发模式设置 */
+	int l_trig_mode;	// 监听socket触发模式
+	int trig_mode;		// 设置连接socket触发模式
+	l_trig_mode = 1;
+	trig_mode = 0;
+
 	epoll_event events[MAX_EVENT_NUMBER];
 	epollfd = epoll_create( 5 );
 	assert( epollfd != -1 );
-	addfd( epollfd, listenfd, false );
+	addfd( epollfd, listenfd, false, l_trig_mode );
 	http_conn::m_epollfd = epollfd;
 
 
 	ret = socketpair(AF_UNIX, SOCK_STREAM, 0, pipefd);
 	assert(ret != -1);
 	setnonblocking(pipefd[1]);
-	addfd(epollfd, pipefd[0], false);
+	addfd(epollfd, pipefd[0], false, 0);
 
 	addsig(SIGALRM, sig_handler, false);
 	addsig(SIGTERM, sig_handler, false);
@@ -187,35 +193,75 @@ int main( int argc, char *argv[] )
 			{
 				struct sockaddr_in client_addr;
 				socklen_t client_addrlen = sizeof( client_addr );
-				int connfd = accept( listenfd, ( struct sockaddr *)&client_addr, &client_addrlen );
-				if( connfd < 0 )
-				{
-					//printf( "errno is: %d\n", errno );
-					LOG_ERROR("%s:errno is:%d", "accept error", errno);
-					continue;
-				}
 
-				/* 客户连接计数超出最大连接数 */
-				if( http_conn::m_user_count >= MAX_FD )
+				if(0 == l_trig_mode)	// LT
 				{
-					show_error( connfd, "Internal server busy" );
-					LOG_ERROR("%s", "Internal server busy");
-					continue;
-				}
-				/* 初始化客户连接 */
-				users[connfd].init( connfd, client_addr );
+					int connfd = accept( listenfd, ( struct sockaddr *)&client_addr, &client_addrlen );
+					if( connfd < 0 )
+					{
+						//printf( "errno is: %d\n", errno );
+						LOG_ERROR("%s:errno is:%d", "accept error", errno);
+						continue;
+					}
 
-				/* 初始化client_data数据 */
-				user_timer[connfd].address = client_addr;
-				user_timer[connfd].sockfd = connfd;
-				util_timer *timer = new util_timer;
-				assert(timer);
-				timer->user_data = &user_timer[connfd];
-				timer->cb_func = cb_func;
-				time_t c_time = time(NULL);
-				timer->expire = c_time + 3*TIME_SLOT;
-				user_timer[connfd].timer = timer;
-				timer_lst.add_timer(timer);
+					/* 客户连接计数超出最大连接数 */
+					if( http_conn::m_user_count >= MAX_FD )
+					{
+						show_error( connfd, "Internal server busy" );
+						LOG_ERROR("%s", "Internal server busy");
+						continue;
+					}
+					/* 初始化客户连接 */
+					users[connfd].init( connfd, client_addr, trig_mode );
+
+					/* 初始化client_data数据 */
+					user_timer[connfd].address = client_addr;
+					user_timer[connfd].sockfd = connfd;
+					util_timer *timer = new util_timer;
+					assert(timer);
+					timer->user_data = &user_timer[connfd];
+					timer->cb_func = cb_func;
+					time_t c_time = time(NULL);
+					timer->expire = c_time + 3*TIME_SLOT;
+					user_timer[connfd].timer = timer;
+					timer_lst.add_timer(timer);
+
+				}
+				else	// ET
+				{
+					while(1)
+					{
+						int connfd = accept( listenfd, ( struct sockaddr *)&client_addr, &client_addrlen );
+						if( connfd < 0 )
+						{
+							//printf( "errno is: %d\n", errno );
+							LOG_ERROR("%s:errno is:%d", "accept error", errno);
+							break;
+						}
+
+						/* 客户连接计数超出最大连接数 */
+						if( http_conn::m_user_count >= MAX_FD )
+						{
+							show_error( connfd, "Internal server busy" );
+							LOG_ERROR("%s", "Internal server busy");
+							break;
+						}
+						/* 初始化客户连接 */
+						users[connfd].init( connfd, client_addr, trig_mode );
+
+						/* 初始化client_data数据 */
+						user_timer[connfd].address = client_addr;
+						user_timer[connfd].sockfd = connfd;
+						util_timer *timer = new util_timer;
+						assert(timer);
+						timer->user_data = &user_timer[connfd];
+						timer->cb_func = cb_func;
+						time_t c_time = time(NULL);
+						timer->expire = c_time + 3*TIME_SLOT;
+						user_timer[connfd].timer = timer;
+						timer_lst.add_timer(timer);
+					}
+				}
 
 			}
 			else if( events[i].events & ( EPOLLRDHUP | EPOLLHUP | EPOLLERR ) )

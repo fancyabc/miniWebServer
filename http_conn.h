@@ -59,7 +59,7 @@ class http_conn
 
 	public:
 		/* 初始化新接受的连接 */
-		void init( int sockfd, const sockaddr_in &addr );
+		void init( int sockfd, const sockaddr_in &addr, int trig_mode );
 
 		/* 关闭http连接 */
 		void close_conn( bool real_close = true );
@@ -162,6 +162,8 @@ class http_conn
 
 		int cgi;				// 是否启动CGI
 		char *m_string;			// 请求头数据
+
+		int m_trig_mode;
 };
 
 
