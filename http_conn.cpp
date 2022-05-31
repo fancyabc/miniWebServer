@@ -238,7 +238,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 	
 	// 因为有\0的存在，method=GET
 	char * method = text;
-	if( strcasecmp( method, "GET" ) == 0 )	// 忽略大小比较字符串， 确定是 GET 方法（本例支支持GET方法）
+	if( strcasecmp( method, "GET" ) == 0 )	// 忽略大小比较字符串， 确定是 GET 方法
 	{
 		m_method = GET;
 	}
@@ -430,7 +430,7 @@ http_conn::HTTP_CODE http_conn::process_read()
 }
 
 
-
+/* 处理响应逻辑 */
 http_conn::HTTP_CODE http_conn::do_request()
 {
 	strcpy( m_real_file, doc_root );		// 将网站根目录复制到缓冲区 m_real_file
