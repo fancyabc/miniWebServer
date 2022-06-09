@@ -132,3 +132,5 @@ fancy@fancy:miniWebServer$
 
 - 测试环境:ubuntu20.04 cpu:i5-4210u 内存：8G
 - QPS 10000+
+
+以上内容参考：游双《Linux高性能服务器编程》和 https://github.com/qinguoyi/TinyWebServer
