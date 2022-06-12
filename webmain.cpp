@@ -92,7 +92,7 @@ void cb_func(client_data *userdata)
 /* 主函数仅负责IO的读写 */
 int main( int argc, char *argv[] )
 {
-	Log::get_instance()->init("./log/log/ServerLog", 2000, 800000, 0);
+	Log::get_instance()->init("./log/ServerLog", 2000, 800000, 0);
 	if( argc <= 2 )
 	{
 		printf( "usage: %s ip_address port_number\n", basename( argv[0] ) );
