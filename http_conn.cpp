@@ -317,7 +317,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line( char *text )
 	}
 
 	/* 在此显示请求的url */
-	printf("url is %s\n", m_url);
+	// printf("url is %s\n", m_url);
 	LOG_INFO("url is %s\n", m_url);
 	Log::get_instance()->flush();
 
