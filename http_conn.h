@@ -19,9 +19,11 @@
 #include <stdarg.h>
 #include <errno.h>
 #include<sys/uio.h>
+#include <map>
 
 #include "locker.h"
 #include "sql_conn_pool.h"
+#include "Utils.h"
 
 
 /* 线程池模板参数类，用以封装对逻辑任务的处理 */
@@ -59,7 +61,7 @@ class http_conn
 
 	public:
 		/* 初始化新接受的连接 */
-		void init( int sockfd, const sockaddr_in &addr, int trig_mode );
+		void init( int sockfd, const sockaddr_in &addr, char *root, int trig_mode );
 
 		/* 关闭http连接 */
 		void close_conn( bool real_close = true );
@@ -79,6 +81,8 @@ class http_conn
 
 		// 同步线程初始化数据库读取表
 		void initmysql_result(conn_pool *connPool);
+
+		int getFd(){return m_sockfd;};
 
 
 	private:
@@ -164,6 +168,11 @@ class http_conn
 		char *m_string;			// 请求头数据
 
 		int m_trig_mode;
+
+		char * doc_root;
+		static map<string,string> users;	// 用户名 密码
+
+		Utils util;
 };
 
 

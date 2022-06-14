@@ -1,7 +1,5 @@
 /* 用线程池实现一个并发的web服务器 */
 
-#include <map>
-
 #include "http_conn.h"
 #include "./log/log.h"
 
@@ -18,14 +16,8 @@ const char * error_404_form = "The requested file was not found on this server.\
 const char * error_500_title = "Internal Error";
 const char * error_500_form = "There was an unusual problem serving the requested file.\n";
 
-/* 网站的根目录 */
-const char * doc_root = "/home/fancy/Desktop/MyProjects/miniWebServer/root";
 
-
-map<string,string> users;	// 用户名 密码
-locker m_lock;
-
-
+map<string,string> http_conn::users;
 /* 将数据库的用户和密码载入到服务器的map中来 */
 void http_conn::initmysql_result(conn_pool *connPool)
 {
@@ -58,54 +50,6 @@ void http_conn::initmysql_result(conn_pool *connPool)
 	}
 }
 
-int setnonblocking( int fd )
-{
-	int old_option = fcntl( fd, F_GETFL );
-	int new_option = old_option | O_NONBLOCK;
-	fcntl( fd, F_SETFL, new_option );
-	return old_option;
-}
-
-void addfd( int epollfd, int fd, bool one_shot, int trig_mode )
-{
-	epoll_event event;
-	event.data.fd = fd;
-
-	// 边沿触发模式
-	if(1 == trig_mode)
-		event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-	else	// 水平触发模式
-		event.events = EPOLLIN | EPOLLRDHUP;
-
-	if( one_shot )
-	{
-		event.events |= EPOLLONESHOT;
-	}
-	epoll_ctl( epollfd, EPOLL_CTL_ADD, fd, &event );
-	setnonblocking( fd );
-}
-
-
-void removefd( int epollfd, int fd )
-{
-	epoll_ctl( epollfd, EPOLL_CTL_DEL, fd, 0 );
-	close( fd );
-}
-
-
-void modfd( int epollfd, int fd, int ev, int trig_mode )
-{
-	epoll_event event;
-	event.data.fd = fd;
-
-	// 边沿触发模式
-	if(1 == trig_mode)
-		event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-	else	// 水平触发模式
-		event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
-	
-	epoll_ctl( epollfd, EPOLL_CTL_MOD, fd, &event );
-}
 
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
@@ -114,7 +58,7 @@ void http_conn::close_conn( bool real_close )
 {
 	if( real_close && ( m_sockfd != -1 ) )
 	{
-		removefd( m_epollfd, m_sockfd );
+		util.removefd( m_epollfd, m_sockfd );
 		m_sockfd = -1;
 		m_user_count--;
 	}
@@ -122,7 +66,7 @@ void http_conn::close_conn( bool real_close )
 }
 
 
-void http_conn::init( int sockfd, const sockaddr_in &addr, int trig_mode )
+void http_conn::init( int sockfd, const sockaddr_in &addr, char *root, int trig_mode )
 {
 	m_sockfd = sockfd;
 	m_address = addr;
@@ -133,9 +77,10 @@ void http_conn::init( int sockfd, const sockaddr_in &addr, int trig_mode )
 
 	m_trig_mode = trig_mode;	// 初始化触发模式
 
-	addfd( m_epollfd, sockfd, true, m_trig_mode );
+	util.addfd( m_epollfd, sockfd, true, m_trig_mode );
 	m_user_count++;
 
+	doc_root = root;
 	init();
 }
 
@@ -508,6 +453,7 @@ http_conn::HTTP_CODE http_conn::do_request()
 			/* 查找是否有重复用户名 */
 			if( users.find(name) == users.end() )	//无重复用户名
 			{
+				locker m_lock;
 				m_lock.lock();
 
 				int res = mysql_query(mysql, sql_insert);
@@ -626,7 +572,7 @@ bool http_conn::write()
 
 	if( bytes_to_send == 0 )
 	{
-		modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );	// 绑定m_sockfd到m_epollfd，关注其读事件
+		util.modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );	// 绑定m_sockfd到m_epollfd，关注其读事件
 		init();		// 初始化连接
 		return true;	// 返回调用成功 true
 	}
@@ -640,7 +586,7 @@ bool http_conn::write()
 		{
 			if( errno == EAGAIN )	// TCP窗口太小，暂时发不出去
 			{
-				modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );	// 绑定m_sockfd到m_epollfd， 关注其写事件			
+				util.modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );	// 绑定m_sockfd到m_epollfd， 关注其写事件			
 				return true;
 			}
 
@@ -670,7 +616,7 @@ bool http_conn::write()
 		{
 			/* 发送HTTP响应成功，根据HTTP请求中的Connection字段决定是否立即关闭连接 */
 			unmap();	// 解除映射
-			modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
+			util.modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
 
 			if( m_linger )
 			{
@@ -849,7 +795,7 @@ void http_conn::process()
 	/* 状态是NO_REQUEST 请求不完整，需要继续读取客户数据时，重新绑定m_sockfd到m_epollfd并关注其读；然后返回 */
 	if( read_ret == NO_REQUEST )
 	{
-		modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
+		util.modfd( m_epollfd, m_sockfd, EPOLLIN, m_trig_mode );
 		return;
 	}
 
@@ -860,5 +806,5 @@ void http_conn::process()
 		close_conn( );
 	}
 
-	modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );
+	util.modfd( m_epollfd, m_sockfd, EPOLLOUT, m_trig_mode );
 }
