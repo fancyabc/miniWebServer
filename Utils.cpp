@@ -1,18 +1,33 @@
-# include "Utils.h"
-#include "lst_timer.h"
+#include "Utils.h"
 
-/* 静态成员类外初始化 */
 int *Utils::m_pipefd = 0;
 int Utils::m_epollfd = 0;
 
+//对文件描述符设置非阻塞
 int Utils::setNonBlock(int fd)
 {
-    int old_option = fcntl( fd, F_GETFL );
-	int new_option = old_option | O_NONBLOCK;
-	fcntl( fd, F_SETFL, new_option );
-	return old_option;
+    int old_option = fcntl(fd, F_GETFL);
+    int new_option = old_option | O_NONBLOCK;
+    fcntl(fd, F_SETFL, new_option);
+    return old_option;
 }
 
+//将内核事件表注册读事件，ET模式，选择开启EPOLLONESHOT
+void Utils::addfd(int epollfd, int fd, bool one_shot, int TRIGMode)
+{
+    epoll_event event;
+    event.data.fd = fd;
+
+    if (1 == TRIGMode)
+        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+    else
+        event.events = EPOLLIN | EPOLLRDHUP;
+
+    if (one_shot)
+        event.events |= EPOLLONESHOT;
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+    setNonBlock(fd);
+}
 
 //信号处理函数
 void Utils::sig_handler(int sig)
@@ -37,56 +52,24 @@ void Utils::addsig(int sig, void(handler)(int), bool restart)
 }
 
 
-void Utils::addfd( int epollfd, int fd, bool one_shot, int trig_mode )
+void Utils::modfd(int epollfd, int fd, int ev, int trig_mod)
 {
-	epoll_event event;
-	event.data.fd = fd;
+    epoll_event event;
+    event.data.fd = fd;
 
-	// 边沿触发模式
-	if(1 == trig_mode)
-		event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-	else	// 水平触发模式
-		event.events = EPOLLIN | EPOLLRDHUP;
+    if (1 == trig_mod)
+        event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+    else
+        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
 
-	if( one_shot )
-	{
-		event.events |= EPOLLONESHOT;
-	}
-	epoll_ctl( epollfd, EPOLL_CTL_ADD, fd, &event );
-	setNonBlock( fd );
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
 }
 
 
-void Utils::removefd( int epollfd, int fd )
+class Utils;
+void cb_func(client_data *user_data)
 {
-	epoll_ctl( epollfd, EPOLL_CTL_DEL, fd, 0 );
-	close( fd );
-}
-
-
-void Utils::modfd( int epollfd, int fd, int ev, int trig_mode )
-{
-	epoll_event event;
-	event.data.fd = fd;
-
-	// 边沿触发模式
-	if(1 == trig_mode)
-		event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-	else	// 水平触发模式
-		event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
-	
-	epoll_ctl( epollfd, EPOLL_CTL_MOD, fd, &event );
-}
-
-
-
-void cb_func(client_data *userdata)
-{
-    assert(userdata);
-    epoll_ctl(Utils::m_epollfd, EPOLL_CTL_DEL, userdata->sockfd, 0);
-    close(userdata->sockfd);
-//    http_conn::m_user_count--;
-    
-    LOG_INFO("close fd %d", userdata->sockfd);
-    Log::get_instance()->flush();
+    epoll_ctl(Utils::m_epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
+    assert(user_data);
+    close(user_data->sockfd);
 }

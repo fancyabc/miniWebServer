@@ -1,14 +1,15 @@
 #include "webserver.h"
 
-WebServer::WebServer() 
+WebServer::WebServer() :m_threadpool(new ThreadPool(8)) // 在此创建线程池
 {
-    users = new http_conn[MAX_FD];
+    //users = new http_conn[MAX_FD];
+    users = new httpConn[MAX_FD];
     user_timer = new client_data[MAX_FD];
 
     /* 资源所在目录 */
     char resource_path[200];
     getcwd(resource_path, 200);
-    char root[] = "/root";
+    char root[] = "/resources/";
     m_srcDir = (char *)malloc(strlen(resource_path)+strlen(root)+1);
     strcpy(m_srcDir, resource_path);
     strcat(m_srcDir, root);
@@ -22,9 +23,12 @@ WebServer::~WebServer()
     close(m_listenfd);
     close(m_pipefd[1]);
     close(m_pipefd[0]);
+    conn_pool::GetInstance()->DestroyPool();
     delete [] users;
     delete [] user_timer;
-    delete m_threadPool;
+
+    m_stop = true;
+    free(m_srcDir);
 }
 
 
@@ -34,26 +38,34 @@ void WebServer::init(int port, int trigMode, bool optLinger,
         bool openLog, int logQueueSize)
 {
     m_port = port;
-    http_conn::m_user_count = 0;
+    httpConn::m_userCount = 0;
 
+    initEventMode(trigMode);
     if( openLog )
     {
         Log::get_instance()->init("./log/ServerLog", 2000, 800000, logQueueSize);
+        if(m_stop)
+        {
+            LOG_ERROR("========== Server init error!==========");
+        }
+        else{
+            LOG_INFO("========== Server init ==========");
+            LOG_INFO("Port:%d, OpenLinger: %s", m_port, m_optLinger? "true":"false");
+            LOG_INFO("Listen Mode: %s, OpenConn Mode: %s",
+                            (l_trig_mode ? "ET": "LT"),
+                            (trig_mode ? "ET": "LT"));
+            LOG_INFO("srcDir: %s", httpConn::m_srcDir);
+            LOG_INFO("SqlConnPool num: %d, ThreadPool num: %d", connPoolNum, threadNum);
+        }
     }
     
-    m_sqlConnPool = conn_pool::GetInstance();
-    m_sqlConnPool->init("localhost", sqlUsername, sqlPasswd, dbName, 3306, connPoolNum);
-    users->initmysql_result(m_sqlConnPool);     // 初始化数据可读取表
-
-
-    initEventMode(trigMode);
+    conn_pool::GetInstance()->init("localhost", sqlUsername, sqlPasswd, dbName, 3306, connPoolNum);
+   //  users->initmysql_result(m_sqlConnPool);     // 初始化数据可读取表
 
     if( !initSocket() )
     {
         m_stop = true;
     }
-    
-    m_threadPool = new threadpool<http_conn>(m_sqlConnPool);    // 在此创建线程池
 }
 
 
@@ -126,15 +138,16 @@ bool WebServer::initSocket()
     }
 
     // 将监听fd纳入epoll 绑定到epollfd
-    epoll_event events[MAX_EVENT_NUMBER];
+//    events[MAX_EVENT_NUMBER];
     m_epollfd = epoll_create(5);    // 在此创建epollfd
     assert( m_epollfd != -1 );
 
+    /* 设置信号和描述符 */
+    Utils::m_pipefd = m_pipefd;
+    Utils::m_epollfd = m_epollfd;
 
     // 设置监听fd非阻塞
-    //utils.setNonBlock(m_listenfd);
     utils.addfd(m_epollfd, m_listenfd, false, l_trig_mode);
-    http_conn::m_epollfd = m_epollfd;
     LOG_INFO("Server port: %d", m_port);
 
     ret = socketpair(AF_UNIX,SOCK_STREAM, 0,  m_pipefd);
@@ -156,17 +169,18 @@ bool WebServer::initSocket()
 
     alarm(TIME_SLOT);
 
-    /* 设置信号和描述符 */
-    Utils::m_pipefd = m_pipefd;
-    Utils::m_epollfd = m_epollfd;
     return true;
 }
 
-void WebServer::closeConn(int fd) {
-
+void WebServer::closeConn(httpConn *client) 
+{
+    assert(client);
+    client->Close();    // 关闭连接 的状态
     //服务器端关闭连接，移除对应的定时器
-    util_timer *timer = user_timer[fd].timer;
-    dealTimer(timer, fd);
+    util_timer *timer = user_timer[client->getFd()].timer;
+    dealTimer(timer, client->getFd());
+//    LOG_INFO("Client[%d] quit!", client->getFd());
+//    utils.removefd(m_epollfd, client->getFd());
 }
 
 
@@ -193,6 +207,7 @@ void WebServer::initEventMode(int trigMode)
         l_trig_mode = 1;
         trig_mode = 1;
     }
+    httpConn::m_isET = (trig_mode==1 ? 1 : 0);
 }
 
 
@@ -222,16 +237,16 @@ void WebServer::eventLoop()
 
             if(fd == m_listenfd)
             {
-                bool flag = dealListen();
+                bool flag = false;
+                flag = dealListen();
                 if( false == flag )
                 {
                     continue;
                 }
-
             }
             else if( events[i].events & ( EPOLLRDHUP | EPOLLHUP | EPOLLERR) )
             {
-                closeConn(fd);
+                closeConn(&users[fd]);      // 通过fd索引到具体的http连接
             }
             else if( (fd == m_pipefd[0]) && ( events[i].events & EPOLLIN ) )
             {
@@ -241,11 +256,11 @@ void WebServer::eventLoop()
             }
             else if( events[i].events & EPOLLIN )
             {
-                dealRead(fd);
+                dealRead(&users[fd]);
             }
             else if( events[i].events & EPOLLOUT )
             {
-                dealWrite(fd);
+                dealWrite(&users[fd]);
             }
         }
         /*  */
@@ -266,25 +281,24 @@ bool WebServer::dealListen()
 {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
+
     if( 1 == l_trig_mode )   // ET
     {
         int connfd = accept(m_listenfd, (struct sockaddr *)&addr, &addrlen);
         if( connfd < 0 )
         {
-            //printf( "errno is: %d\n", errno );
             LOG_ERROR("%s:errno is:%d", "accept error", errno);
             return false;
         }
-
-        /* 客户连接计数超出最大连接数 */
-        if( http_conn::m_user_count >= MAX_FD )
+        // 客户连接计数超出最大连接数
+        if( httpConn::m_userCount >= MAX_FD )
         {
             LOG_ERROR("%s", "Internal server busy");
             return false;
         }
 
-        /* 初始化客户端连接 */
-        timer(connfd, addr);
+        //  初始化客户端连接 
+        addClient(connfd, addr);
     }
     else                // lt
     {   
@@ -293,23 +307,22 @@ bool WebServer::dealListen()
             int connfd = accept( m_listenfd, ( struct sockaddr *)&addr, &addrlen );
             if( connfd < 0 )
             {
-                //printf( "errno is: %d\n", errno );
                 LOG_ERROR("%s:errno is:%d", "accept error", errno);
                 break;
             }
 
-            /* 客户连接计数超出最大连接数 */
-            if( http_conn::m_user_count >= MAX_FD )
+            // 客户连接计数超出最大连接数 
+            if( httpConn::m_userCount >= MAX_FD )
             {
                 LOG_ERROR("%s", "Internal server busy");
                 break;
             }
-            /* 初始化客户端连接 */
-            timer(connfd, addr);
+            // 初始化客户端连接 
+            addClient(connfd, addr);
 
         }
         return false;
-    }
+    }  
     return true;
 }
 
@@ -355,58 +368,90 @@ bool WebServer::dealSignal()
 
 
 
-void WebServer::dealRead(int sockfd)
+void WebServer::dealRead(httpConn *client)
 {
     /* 处理客户连接上收到的数据 */
-    util_timer *timer = user_timer[sockfd].timer;
-    if( users[sockfd].read() )
-    {
-        /* log */
-        LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
-        Log::get_instance()->flush();
+    extentTime(client);
+    m_threadpool->AddTask(std::bind(&WebServer::onRead, this, client));
+}
 
-        m_threadPool->append( users + sockfd );
 
-        /* 若有数据传输，则重置定时器超时时间 */
-        if(timer)
-        {
-            timerAdjust(timer);
-        }
-    }
-    else
+void WebServer::extentTime(httpConn *client)
+{
+    assert(client);
+    util_timer *timer = user_timer[client->getFd()].timer;
+    if(timer)
     {
-        // 关闭连接并删除对应定时器
-        dealTimer(timer, sockfd);
+        timerAdjust(timer);
     }
 }
 
 
-void WebServer::dealWrite(int sockfd)
-{
-    util_timer *timer = user_timer[sockfd].timer;
-    /* 根据写的结果，决定是否关闭连接 */
-    if( users[sockfd].write() )
-    {
-        /* log */
-        LOG_INFO("send data to the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
-        Log::get_instance()->flush();
-        /* 若有数据传输，则重置定时器超时时间 */
-        if(timer)
-        {
-            timerAdjust(timer);
-        }
+void WebServer::onRead(httpConn* client) {
+    assert(client);
+    int ret = -1;
+    int readErrno = 0;
+    ret = client->read(&readErrno);
+    if(ret <= 0 && readErrno != EAGAIN) {
+        closeConn(client);
+        return;
     }
-    else
-    {
-        // 关闭连接并删除对应定时器
-        dealTimer(timer, sockfd);
-    }
+    onProcess(client);
 }
 
 
-void WebServer::timer(int connfd, struct sockaddr_in addr)
+void WebServer::dealWrite(httpConn *client)
 {
-    users[connfd].init(connfd, addr, m_srcDir,trig_mode);
+    extentTime(client);
+    m_threadpool->AddTask(std::bind(&WebServer::onWrite, this, client));
+}
+
+
+void WebServer::onWrite(httpConn *client)
+{
+    assert(client);
+    int ret = -1;
+    int writeErrno = 0;
+    ret = client->write(&writeErrno);
+    if(client->toWriteBytes() == 0) 
+    {
+        /* 传输完成 */
+        if(client->isKeepAlive()) 
+        {
+            onProcess(client);
+            return;
+        }
+    }
+    else if(ret < 0) 
+    {
+        if(writeErrno == EAGAIN) 
+        {
+            /* 继续传输 */
+            //epoller_->ModFd(client->getFd(), connEvent_ | EPOLLOUT);
+            utils.modfd(m_epollfd,client->getFd(), EPOLLOUT, trig_mode);
+            return;
+        }
+    }
+    closeConn(client);    
+}
+
+void WebServer::onProcess(httpConn *client)
+{
+    if(client->process())   // 返回真说明处理完成，可以写了，为其注册可写事件
+    {
+        utils.modfd(m_epollfd,client->getFd(), EPOLLOUT, trig_mode);
+    }
+    else
+    {
+        utils.modfd(m_epollfd,client->getFd(), EPOLLIN, trig_mode);
+    }
+}
+
+/* 添加新连接：初始化连接，为其设置对应的定时器 */
+void WebServer::addClient(int connfd, struct sockaddr_in addr)
+{
+    users[connfd].init(connfd, addr);
+    utils.addfd(m_epollfd, connfd, true, trig_mode);    // 在此添加要监听描述符
 
     /* 初始化client_data数据 */
     user_timer[connfd].address = addr;
@@ -419,6 +464,7 @@ void WebServer::timer(int connfd, struct sockaddr_in addr)
     timer->expire = c_time + 3*TIME_SLOT;
     user_timer[connfd].timer = timer;
     timer_lst.add_timer(timer);
+    LOG_INFO("Client[%d] in!", users[connfd].getFd());
 }
 
 

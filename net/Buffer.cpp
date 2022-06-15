@@ -27,6 +27,39 @@ size_t net::Buffer::prependableBytes() const
     return read_Index;
 }
 
+
+ssize_t net::Buffer::readFd(int fd, int *saveErrno)
+{
+    char extrabuf[65536];
+    const size_t writeable = writeableBytes();
+
+    struct iovec vec[2];
+	
+	vec[0].iov_base = begin() + write_Index;
+	vec[0].iov_len = writeable;
+	vec[1].iov_base = extrabuf;
+	vec[1].iov_len = sizeof(extrabuf);
+
+	const int iovcnt = (writeable < sizeof(extrabuf)) ? 2 : 1;
+	const ssize_t n = readv(fd, vec, iovcnt);
+
+    if( n < 0 )
+    {
+        *saveErrno = errno;
+    }
+    else if( static_cast<size_t>(n) <= writeable )
+    {
+        write_Index += n;
+    }
+    else
+    {
+        write_Index = m_buffer.size();
+        append(extrabuf, n - writeable);
+    }
+    return n;
+}
+
+
 /* 返回存储数据区间的首地址 */
 const char *net::Buffer::peek() const
 {

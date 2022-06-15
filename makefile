@@ -1,5 +1,11 @@
-server: 
-	g++ -g -o server webmain.cpp  webserver.cpp http_conn.cpp sql_conn_pool.cpp ./log/log.cpp Utils.cpp -lpthread -lmysqlclient
+CXX = g++
+CFLAGS = -std=c++14 -O2 -Wall -g 
+
+TARGET = server
+OBJS = log/*.cpp net/Buffer.cpp *.cpp
+
+all: $(OBJS)
+	$(CXX) $(CFLAGS) $(OBJS) -o $(TARGET)  -pthread -lmysqlclient
 
 clean:
-	rm -r server
+	rm server

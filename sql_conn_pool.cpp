@@ -35,7 +35,7 @@ void conn_pool::init(string ip,  string User, string PassWord, string DBName, in
     this->PassWord = PassWord;
     this->DataBaseName = DBName;
 
-    for(int i=0;i < MaxConn; i++)
+    for(unsigned int i=0;i < MaxConn; i++)
     {
         MYSQL *conn = NULL;
         conn = mysql_init(conn);

@@ -14,10 +14,11 @@
 //#include <sys/epoll.h>
 #include <memory>
 
-#include "net/EpollPoller.h"        // 用自己的 封装逐步替换原来的原生代码
+//#include "net/EpollPoller.h"        // 用自己的 封装逐步替换原来的原生代码
 #include "locker.h"
-#include "threadpool.h"
-#include "http_conn.h"
+#include "thread_pool.h"
+//#include "http_conn.h"
+#include "http_connection.h"
 #include "sql_conn_pool.h"
 #include "lst_timer.h"
 #include "./log/log.h"
@@ -29,6 +30,7 @@
 #define MAX_EVENT_NUMBER 10000
 #define TIME_SLOT 5			// 最小超时时间
 
+/* 事件循环还有注册、注销的管理都放在这里 */
 class WebServer
 {
 public:
@@ -47,16 +49,20 @@ private:
 
     bool dealListen();
     bool dealSignal();
-    void dealRead(int fd);
-    void dealWrite(int fd);
+    void dealRead(httpConn *client);
+    void dealWrite(httpConn *client);
 
-    void timer(int connfd, struct sockaddr_in addr);
+    void addClient(int connfd, struct sockaddr_in addr);
+    void extentTime(httpConn* client);
     void timerAdjust(util_timer *timer);
     void dealTimer(util_timer *timer, int sockfd);
 
     void addClient();
 
-    void closeConn(int sockfd);   // 关闭连接
+    void closeConn(httpConn *client);   // 关闭连接
+    void onRead(httpConn* client);
+    void onWrite(httpConn* client);
+    void onProcess(httpConn *client);
 
 private:
     int m_port;
@@ -69,7 +75,7 @@ private:
     bool m_optLinger;
 
     
-    Utils utils;
+    Utils utils;            /* 工具类对象，调用它的方法管理要监听的事件 */
 
     bool m_timeout;     
     bool m_stop;         // 是否停止Loop（）
@@ -84,10 +90,12 @@ private:
     epoll_event events[MAX_EVENT_NUMBER];
 
     client_data *user_timer;
-    threadpool<http_conn>  *m_threadPool;
-    conn_pool *m_sqlConnPool; // 数据库连接池对象
-    http_conn *users;
+//    conn_pool *m_sqlConnPool; // 数据库连接池对象
     sort_timer_lst timer_lst;    // 定时器链表
+
+    /* httpConn类 */
+    httpConn *users;
+    std::unique_ptr<ThreadPool> m_threadpool;
 };
 
 

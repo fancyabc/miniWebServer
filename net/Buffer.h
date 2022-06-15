@@ -21,6 +21,8 @@
 #include <vector>
 #include <assert.h>
 #include <iostream>
+#include <unistd.h>  // write
+#include <sys/uio.h> //readv
 
 namespace net{
 
@@ -41,16 +43,18 @@ namespace net{
 class Buffer
 {
 public:
-    static const size_t kInitialSize;   // 在此声明
-    static const size_t kCheapPrepend;    // 本项目，暂不 定义缓冲区头的预留空间
+//    static const size_t kInitialSize;   // 在此声明
+//    static const size_t kCheapPrepend;    // 本项目，暂不 定义缓冲区头的预留空间
     
 public:
-    explicit Buffer(size_t initialSize = kInitialSize );
+    explicit Buffer(size_t initialSize = 1024 );
     ~Buffer();
 
     size_t readableBytes() const;
     size_t writeableBytes() const;
     size_t prependableBytes() const;
+
+    ssize_t readFd(int fd, int *saveErrno);
 
     const char* peek() const;
     void ensureWriteableBytes(size_t len);
@@ -88,8 +92,8 @@ private:
     size_t write_Index;
 };
 
-const size_t Buffer::kInitialSize = 1024;   // 静态成员变量类外初始化
-const size_t Buffer::kCheapPrepend = 0;     // 预留空间为0
+//const size_t Buffer::kInitialSize = 1024;   // 静态成员变量类外初始化
+//const size_t Buffer::kCheapPrepend = 0;     // 预留空间为0
 }
 
 

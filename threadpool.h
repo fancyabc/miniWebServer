@@ -83,7 +83,7 @@ threadpool<T>::~threadpool()
 }
 
 template<typename T>
-bool threadpool<T>::append(T *request)
+bool threadpool<T>::append(T *Task)
 {
 	/* 操作工作队列时一定要加锁，因为它被所有线程共享 */
 	m_queuelocker.lock();
@@ -92,7 +92,7 @@ bool threadpool<T>::append(T *request)
 		m_queuelocker.unlock();
 		return false;
 	}
-	m_workqueue.push_back(request);
+	m_workqueue.push_back(Task);
 	m_queuelocker.unlock();
 	m_queuestat.post();
 	return true;
@@ -123,7 +123,7 @@ void threadpool<T>::run()
 			m_queuelocker.unlock();
 			continue;
 		}
-		T * request = m_workqueue.front();
+		T *Task = m_workqueue.front();
 		m_workqueue.pop_front();
 		m_queuelocker.unlock();
 		if( !request )
@@ -132,9 +132,9 @@ void threadpool<T>::run()
 		}
 
 		/* 通过RAII方式从数据库连接池中取一个连接 */
-		connctionRAII mysqlcon(&request->mysql, m_connPool);
+		connctionRAII mysqlcon(&Task->mysql, m_connPool);
 
-		request->process();
+		Task->process();
 	}
 }
 
