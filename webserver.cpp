@@ -393,7 +393,8 @@ void WebServer::onRead(httpConn* client) {
     int ret = -1;
     int readErrno = 0;
     ret = client->read(&readErrno);
-    if(ret <= 0 && readErrno != EAGAIN) {
+    if(ret <= 0 && readErrno != EAGAIN)     // 读取失败，关闭连接
+    {
         closeConn(client);
         return;
     }
@@ -413,11 +414,11 @@ void WebServer::onWrite(httpConn *client)
     assert(client);
     int ret = -1;
     int writeErrno = 0;
-    ret = client->write(&writeErrno);
-    if(client->toWriteBytes() == 0) 
+    ret = client->write(&writeErrno);   // 往写缓冲写的字节
+    if(client->toWriteBytes() == 0)     // 没有要写的
     {
         /* 传输完成 */
-        if(client->isKeepAlive()) 
+        if(client->isKeepAlive())       // 处理 缓冲的数据
         {
             onProcess(client);
             return;
@@ -433,17 +434,19 @@ void WebServer::onWrite(httpConn *client)
             return;
         }
     }
-    closeConn(client);    
+    closeConn(client);    // 处理完（或者响应完、或者重新注册监听事件）后，关闭连接
 }
 
 void WebServer::onProcess(httpConn *client)
 {
     if(client->process())   // 返回真说明处理完成，可以写了，为其注册可写事件
     {
+        printf("注册可写事件!\n");
         utils.modfd(m_epollfd,client->getFd(), EPOLLOUT, trig_mode);
     }
     else
     {
+        printf("注册可du事件!\n");
         utils.modfd(m_epollfd,client->getFd(), EPOLLIN, trig_mode);
     }
 }
@@ -482,11 +485,10 @@ void WebServer::timerAdjust(util_timer *timer)
 
 void WebServer::dealTimer(util_timer *timer, int sockfd)
 {
-    timer->cb_func(&user_timer[sockfd]);     
+    timer->cb_func(&user_timer[sockfd]);    
+    LOG_INFO("close fd %d", user_timer[sockfd].sockfd); 
     if (timer)
     {
         timer_lst.del_timer(timer);
     }
-
-    LOG_INFO("close fd %d", user_timer[sockfd].sockfd);
 }

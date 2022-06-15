@@ -52,7 +52,10 @@ httpResponse::~httpResponse() {
 
 void httpResponse::init(const string& srcDir, string& path, bool isKeepAlive, int code){
     assert(srcDir != "");
-    if(m_mmFile) { unmapFile(); }
+    if(m_mmFile) 
+    { 
+        unmapFile(); 
+    }
     m_code = code;
     m_isKeepAlive = isKeepAlive;
     m_path = path;
@@ -86,7 +89,8 @@ size_t httpResponse::fileLen() const {
     return m_mmFileStat.st_size;
 }
 
-void httpResponse::errorHtml() {
+void httpResponse::errorHtml() 
+{
     if(CODE_PATH.count(m_code) == 1) {
         m_path = CODE_PATH.find(m_code)->second;
         stat((m_srcDir + m_path).data(), &m_mmFileStat);
@@ -146,7 +150,8 @@ void httpResponse::unmapFile() {
 string httpResponse::getFileType() {
     /* 判断文件类型 */
     string::size_type idx = m_path.find_last_of('.');
-    if(idx == string::npos) {
+    if(idx == string::npos)     // 找不到类型默认设为text
+    {
         return "text/plain";
     }
     string suffix = m_path.substr(idx);
@@ -169,7 +174,7 @@ void httpResponse::errorContent(Buffer& buff, string message)
     }
     body += to_string(m_code) + " : " + status  + "\n";
     body += "<p>" + message + "</p>";
-    body += "<hr><em>TinyWebServer</em></body></html>";
+    body += "<hr><em>MyWebServer</em></body></html>";     // html 内容到此结束
 
     buff.append("Content-length: " + to_string(body.size()) + "\r\n\r\n");
     buff.append(body);
