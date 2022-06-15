@@ -90,7 +90,7 @@ private:
     epoll_event events[MAX_EVENT_NUMBER];
 
     client_data *user_timer;
-//    conn_pool *m_sqlConnPool; // 数据库连接池对象
+//    std::unique_ptr<client_data> user_timer;
     sort_timer_lst timer_lst;    // 定时器链表
 
     /* httpConn类 */

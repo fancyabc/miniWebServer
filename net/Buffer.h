@@ -65,7 +65,7 @@ public:
 
     void retrieveAll();
     std::string retrieveAllAsString();
-    std::string retrievetoString(int len);
+    std::string retrievetoString(size_t len);
 
     char* beginWrite();
     const char *beginWriteConst() const;

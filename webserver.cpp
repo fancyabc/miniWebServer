@@ -7,12 +7,9 @@ WebServer::WebServer() :m_threadpool(new ThreadPool(8)) // 在此创建线程池
     user_timer = new client_data[MAX_FD];
 
     /* 资源所在目录 */
-    char resource_path[200];
-    getcwd(resource_path, 200);
-    char root[] = "/resources/";
-    m_srcDir = (char *)malloc(strlen(resource_path)+strlen(root)+1);
-    strcpy(m_srcDir, resource_path);
-    strcat(m_srcDir, root);
+    m_srcDir = getcwd(nullptr, 200);
+    assert(m_srcDir);
+    strncat(m_srcDir, "/resources",12);
 
 }
 
@@ -39,6 +36,7 @@ void WebServer::init(int port, int trigMode, bool optLinger,
 {
     m_port = port;
     httpConn::m_userCount = 0;
+    httpConn::m_srcDir = m_srcDir;
 
     initEventMode(trigMode);
     if( openLog )
@@ -165,7 +163,7 @@ bool WebServer::initSocket()
 
     utils.addsig(SIGPIPE, SIG_IGN);
     utils.addsig(SIGALRM, utils.sig_handler, false);
-    utils.addsig(SIGTERM, utils.sig_handler, false);
+//    utils.addsig(SIGTERM, utils.sig_handler, false);
 
     alarm(TIME_SLOT);
 
@@ -179,8 +177,6 @@ void WebServer::closeConn(httpConn *client)
     //服务器端关闭连接，移除对应的定时器
     util_timer *timer = user_timer[client->getFd()].timer;
     dealTimer(timer, client->getFd());
-//    LOG_INFO("Client[%d] quit!", client->getFd());
-//    utils.removefd(m_epollfd, client->getFd());
 }
 
 
@@ -221,7 +217,10 @@ void WebServer::start()
 void WebServer::eventLoop()
 {
     m_timeout = false;
-    
+    if( !m_stop )
+    {
+        LOG_INFO("========== Server start ==========");
+    }
     while(!m_stop)
     {
         int num = epoll_wait( m_epollfd, events, MAX_EVENT_NUMBER, -1);
@@ -254,6 +253,7 @@ void WebServer::eventLoop()
                 if (false == flag)
                     LOG_ERROR("%s", "deal clientdata failure");
             }
+
             else if( events[i].events & EPOLLIN )
             {
                 dealRead(&users[fd]);
@@ -262,15 +262,16 @@ void WebServer::eventLoop()
             {
                 dealWrite(&users[fd]);
             }
+            else
+            {
+                LOG_ERROR("Unexpected event");
+            }
         }
-        /*  */
         if (m_timeout)
         {
             timer_lst.tick();
             alarm(TIME_SLOT);
-
             LOG_INFO("%s", "timer tick");
-
             m_timeout = false;
         }
     }

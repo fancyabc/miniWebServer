@@ -124,7 +124,7 @@ std::string net::Buffer::retrieveAllAsString()
 }
 
 /* 从缓冲区数据部分读取 len个字符，以string形式返回 */
-std::string net::Buffer::retrievetoString(int len)
+std::string net::Buffer::retrievetoString(size_t len)
 {
     assert(len <= readableBytes());
     std::string result(peek(), len);

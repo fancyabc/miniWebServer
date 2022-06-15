@@ -18,7 +18,6 @@ struct client_data
 {
     sockaddr_in address;
     int sockfd;
-    //char buf[BUFFER_SIZE];
     util_timer *timer;
 };
 

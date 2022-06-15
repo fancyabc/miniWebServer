@@ -115,7 +115,7 @@ bool httpConn::process()
     }
     else if(m_request.parse(m_readBuffer)) 
     {
-        LOG_DEBUG("%s", m_request.path().c_str());
+        LOG_DEBUG("inprocess %s", m_request.path().c_str());
         m_response.init(m_srcDir, m_request.path(), m_request.isKeepAlive(), 200);
     } 
     else 

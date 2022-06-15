@@ -37,18 +37,18 @@ void conn_pool::init(string ip,  string User, string PassWord, string DBName, in
 
     for(unsigned int i=0;i < MaxConn; i++)
     {
-        MYSQL *conn = NULL;
+        MYSQL *conn = nullptr;
         conn = mysql_init(conn);
 
-        if(conn == NULL)
+        if(conn == nullptr)
         {
             cout << "Error:" << mysql_error(conn);  //
             exit(1);
         }
 
-        conn = mysql_real_connect(conn, ip.c_str(), User.c_str(), PassWord.c_str(), DBName.c_str(), Port, NULL, 0 );
+        conn = mysql_real_connect(conn, ip.c_str(), User.c_str(), PassWord.c_str(), DBName.c_str(), Port, nullptr, 0 );
 
-        if(conn == NULL)
+        if(conn == nullptr)
         {
             cout << "Error:" << mysql_error(conn);  //
             exit(1);
@@ -68,11 +68,11 @@ void conn_pool::init(string ip,  string User, string PassWord, string DBName, in
 /* 有请求时，从数据库连接池中返回一个可用的连接，更新使用和空闲连接数 */
 MYSQL *conn_pool::GetConnection()
 {
-    MYSQL *conn = NULL;
+    MYSQL *conn = nullptr;
 
     if(0 == connList.size())
     {
-        return NULL;
+        return nullptr;
     }
 
     // 取出连接， 信号量原子减1， 到0时就等待
@@ -96,7 +96,7 @@ MYSQL *conn_pool::GetConnection()
 /* 释放当前使用的连接 */
 bool conn_pool::ReleaseConnection(MYSQL *conn)
 {
-    if(NULL == conn)
+    if(nullptr == conn)
     {
         return false;
     }
