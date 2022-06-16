@@ -2,6 +2,8 @@
 
 using namespace std;
 
+
+/* 目前（默认）只支持静态资源的访问 */
 const unordered_set<string> httpRequest::DEFAULT_HTML{
             "/index", "/register", "/login",
              "/welcome", "/video", "/picture", };
