@@ -1,4 +1,5 @@
 /.vscode
 
 *.o
-*.log
+log/*.log
+server
