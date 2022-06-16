@@ -79,3 +79,15 @@ sort_timer_lst::del_timer (timer=0x55555d803b20, this=0x7fffffffdee0) at lst_tim
 这个是书上的一个 定时器链表，正常的链表操作应该是木有问题的。
 
 难道是和 链表上定时器关联的资源木有清理？
+```
+commit 60d8f12540dfafa16d69391ce6b9d512e15cc3cd (HEAD -> version2)
+Author: fancyabc <2310403052@qq.com>
+Date:   Wed Jun 15 23:40:02 2022 +0800
+
+    继续定位注册received signal SIGSEGV问题
+
+commit bf47175e79225193d76836e438c6b5625fd95b76
+Author: fancyabc <2310403052@qq.com>
+Date:   Wed Jun 15 20:27:22 2022 +0800
+```
+果然，修改了定时器相关代码，让定时器和用户连接不再相互指向，注册后 signal SIGSEGV 的问题得以解决。
